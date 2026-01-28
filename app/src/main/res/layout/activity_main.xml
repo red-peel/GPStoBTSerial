@@ -7,7 +7,6 @@
     android:layout_height="match_parent"
     android:background="#050B14">
 
-    <!-- BT device selection/connection state -->
     <TextView
         android:id="@+id/btDeviceStatusText"
         android:layout_width="0dp"
@@ -23,7 +22,6 @@
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent"/>
 
-    <!-- RFCOMM socket (“port”) state + permission/GPS errors -->
     <TextView
         android:id="@+id/portStatusText"
         android:layout_width="0dp"
@@ -39,12 +37,11 @@
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent"/>
 
-    <!-- Best-effort list of currently connected BT devices -->
     <TextView
         android:id="@+id/connectedDevicesText"
         android:layout_width="0dp"
         android:layout_height="wrap_content"
-        android:text="OTHER_CONNECTED_DEVICES: (unknown)"
+        android:text="CONNECTED_DEVICES: (checking…)"
         android:textSize="12sp"
         android:fontFamily="monospace"
         android:textColor="#7FDBFF"
@@ -55,7 +52,6 @@
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent"/>
 
-    <!-- Speed display -->
     <TextView
         android:id="@+id/speedText"
         android:layout_width="0dp"
@@ -70,7 +66,7 @@
         app:layout_constraintTop_toBottomOf="@id/connectedDevicesText"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent"/>
-    <!-- Raw Display-->
+
     <TextView
         android:id="@+id/rawSpeedText"
         android:layout_width="0dp"
@@ -86,8 +82,6 @@
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent"/>
 
-
-    <!-- Controls row -->
     <LinearLayout
         android:id="@+id/buttonRow"
         android:layout_width="0dp"
@@ -95,7 +89,7 @@
         android:orientation="horizontal"
         android:layout_marginStart="16dp"
         android:layout_marginEnd="16dp"
-        android:layout_marginTop="4dp"
+        android:layout_marginTop="12dp"
         app:layout_constraintTop_toBottomOf="@id/rawSpeedText"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent">
@@ -120,10 +114,8 @@
             android:textColor="#050B14"
             android:backgroundTint="#7FDBFF"
             android:layout_marginStart="10dp"/>
-
     </LinearLayout>
 
-    <!-- Log window -->
     <ScrollView
         android:id="@+id/logScroll"
         android:layout_width="0dp"
@@ -144,7 +136,7 @@
             android:text="LOG:\n"
             android:textSize="12sp"
             android:fontFamily="monospace"
-            android:textColor="#7FDBFF" />
+            android:textColor="#7FDBFF"/>
     </ScrollView>
 
 </androidx.constraintlayout.widget.ConstraintLayout>

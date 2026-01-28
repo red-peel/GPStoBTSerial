@@ -21,12 +21,13 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
-import com.google.android.gms.location.*
+import com.example.gpstovss.speed.GpsSpeedProvider
+import com.example.gpstovss.speed.SpeedProvider
+import com.google.android.gms.location.LocationServices
 import java.io.OutputStream
 import java.time.LocalTime
 import java.time.format.DateTimeFormatter
 import java.util.UUID
-import kotlin.math.max
 
 class MainActivity : AppCompatActivity() {
 
@@ -38,36 +39,28 @@ class MainActivity : AppCompatActivity() {
     private lateinit var rawSpeedText: TextView
     private lateinit var logText: TextView
     private lateinit var logScroll: ScrollView
-
     private lateinit var btnPick: Button
-
     private lateinit var btnPortToggle: Button
 
-    // Terminal colors
     private val COLOR_ACTIVE = 0xFF7FDBFF.toInt()
     private val COLOR_DISABLED = 0xFF3A3A3A.toInt()
 
-    /* ========= Time / Log ========= */
+    /* ========= Log ========= */
     private val tsFmt: DateTimeFormatter = DateTimeFormatter.ofPattern("HH:mm:ss.SSS")
     private val logLines = ArrayDeque<String>(300)
     private val LOG_MAX = 300
 
-    /* ========= GPS ========= */
-    private lateinit var fusedClient: FusedLocationProviderClient
-    private var locationCallback: LocationCallback? = null
+    /* ========= Speed provider (modular) ========= */
+    private lateinit var speedProvider: SpeedProvider
 
     /* ========= Bluetooth ========= */
     private val btAdapter: BluetoothAdapter? = BluetoothAdapter.getDefaultAdapter()
     private var selectedDevice: BluetoothDevice? = null
-
-    // “Port” = the RFCOMM socket + output stream
     private var socket: BluetoothSocket? = null
     private var out: OutputStream? = null
-
     @Volatile private var isPortOpening = false
     @Volatile private var isPortOpen = false
 
-    // SPP UUID (RFCOMM serial)
     private val SPP_UUID =
         UUID.fromString("00001101-0000-1000-8000-00805F9B34FB")
 
@@ -77,7 +70,10 @@ class MainActivity : AppCompatActivity() {
             if (perms.values.all { it }) {
                 setPortStatus("OK")
                 log("PORT", "Permissions granted")
-                startGps()
+
+                // Start speed provider AFTER permissions
+                speedProvider.start()
+
                 refreshConnectedDevices()
                 refreshButtons()
             } else {
@@ -108,7 +104,6 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // Edge-to-edge boilerplate (kept)
         enableEdgeToEdge()
         setContentView(R.layout.activity_main)
         ViewCompat.setOnApplyWindowInsetsListener(findViewById(R.id.main)) { v, insets ->
@@ -117,7 +112,6 @@ class MainActivity : AppCompatActivity() {
             insets
         }
 
-        // UI refs
         btDeviceStatusText = findViewById(R.id.btDeviceStatusText)
         portStatusText = findViewById(R.id.portStatusText)
         connectedDevicesText = findViewById(R.id.connectedDevicesText)
@@ -125,30 +119,36 @@ class MainActivity : AppCompatActivity() {
         rawSpeedText = findViewById(R.id.rawSpeedText)
         logText = findViewById(R.id.logText)
         logScroll = findViewById(R.id.logScroll)
-
         btnPick = findViewById(R.id.btnPick)
         btnPortToggle = findViewById(R.id.btnPortToggle)
 
-        fusedClient = LocationServices.getFusedLocationProviderClient(this)
-
-        // Button handlers
-        btnPick.setOnClickListener { pickBluetoothDevice() }
         btnPick.setOnClickListener { pickBluetoothDevice() }
         btnPortToggle.setOnClickListener { togglePort() }
 
-        // Initial UI state
         setBtDeviceStatus("DISCONNECTED")
         setPortStatus("CLOSED")
         connectedDevicesText.text = "CONNECTED_DEVICES: (checking…)"
+        speedText.text = "SPEED_MPH: --.--"
+        rawSpeedText.text = "RAW_MPH: --.--"
         log("SYS", "GPStoVSS boot")
+
+        // Create the modular speed provider (GPS-only for now)
+        val fusedClient = LocationServices.getFusedLocationProviderClient(this)
+        speedProvider = GpsSpeedProvider(
+            context = this,
+            fusedClient = fusedClient,
+            onDebug = { msg -> log("SPD", msg) }
+        )
 
         requestPermissions()
         refreshButtons()
+
+        // UI tick: update display + transmit from provider at a steady rate
+        startUiTick()
     }
 
     override fun onStart() {
         super.onStart()
-        // Monitor BT connect/disconnect events (helps diagnose “not connected”)
         registerReceiver(
             btReceiver,
             IntentFilter().apply {
@@ -182,44 +182,26 @@ class MainActivity : AppCompatActivity() {
             permissionLauncher.launch(perms)
         } else {
             setPortStatus("OK")
-            startGps()
+            speedProvider.start()
             refreshConnectedDevices()
         }
     }
 
-    /* ========= GPS ========= */
-    private fun startGps() {
-        if (locationCallback != null) return
+    /* ========= UI tick (display + TX) ========= */
+    private fun startUiTick() {
+        // 10 Hz UI/TX tick (independent of GPS update rate)
+        val handler = android.os.Handler(mainLooper)
+        val runnable = object : Runnable {
+            override fun run() {
+                val s = speedProvider.latest()
 
-        val request = LocationRequest.Builder(
-            Priority.PRIORITY_HIGH_ACCURACY,
-            100L
-        )
-            .setMinUpdateIntervalMillis(100L)
-            .setWaitForAccurateLocation(false)
-            .build()
+                speedText.text = "SPEED_MPH: %.2f".format(s.speedMph)
+                rawSpeedText.text = "RAW_MPH: %.2f".format(s.rawMph)
 
-        locationCallback = object : LocationCallback() {
-            override fun onLocationResult(result: LocationResult) {
-                val loc = result.lastLocation ?: return
-
-                val bearingOk = loc.hasBearing()
-                val bearingDeg = if (bearingOk) loc.bearing else null
-                log("GPS", "speedMps=%.2f bearing=%s".format(loc.speed, bearingDeg?.toString() ?: "NONE"))
-
-                val mphRaw = max(0f, loc.speed * 2.23694f)
-                val mph = if (mphRaw < 0.5f) 0f else mphRaw
-
-                ///format speed values for display
-                speedText.text = "SPEED_MPH: %.2f".format(mph)
-                rawSpeedText.text = "RAW_MPH: %.2f".format(mphRaw)
-
-                // Only transmit if port is open
                 if (isPortOpen) {
-                    val line = "SPEED_MPH:%.2f\r\n".format(mph)
+                    val line = "SPEED_MPH:%.2f\r\n".format(s.speedMph)
                     try {
                         out?.write(line.toByteArray())
-                        // Log what was sent (you asked for this)
                         log("TX", line.trim())
                     } catch (e: Exception) {
                         setPortStatus("WRITE FAIL")
@@ -227,26 +209,15 @@ class MainActivity : AppCompatActivity() {
                         closePort()
                     }
                 }
+
+                handler.postDelayed(this, 100L)
             }
         }
-
-        if (
-            ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION)
-            != PackageManager.PERMISSION_GRANTED
-        ) {
-            setPortStatus("NO FINE LOCATION")
-            log("PORT", "No fine location permission")
-            return
-        }
-
-        fusedClient.requestLocationUpdates(request, locationCallback!!, mainLooper)
-        log("GPS", "Updates started")
+        handler.post(runnable)
     }
 
-    /* ========= BT: show connected devices (best-effort) ========= */
+    /* ========= Connected devices (best-effort) ========= */
     private fun refreshConnectedDevices() {
-        // Android does NOT provide a perfect “all connected devices” list for SPP.
-        // This is a best-effort: common profiles + ACL events.
         try {
             if (
                 ActivityCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT)
@@ -269,11 +240,11 @@ class MainActivity : AppCompatActivity() {
                 if (all.isEmpty()) "CONNECTED_DEVICES: (none)"
                 else "CONNECTED_DEVICES:\n- " + all.joinToString("\n- ")
         } catch (_: Exception) {
-            connectedDevicesText.text = "OTHER_CONNECTED_DEVICES: (unavailable)"
+            connectedDevicesText.text = "CONNECTED_DEVICES: (unavailable)"
         }
     }
 
-    /* ========= BT: device selection ========= */
+    /* ========= BT picker (with DISCONNECT option) ========= */
     private fun pickBluetoothDevice() {
         if (isPortOpen || isPortOpening) return
 
@@ -284,19 +255,16 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
-        val deviceLabels = devices.map { d -> d.name ?: d.address }.toMutableList()
-        deviceLabels.add("DISCONNECT DEVICE")
+        val labels = devices.map { it.name ?: it.address }.toMutableList()
+        labels.add("DISCONNECT DEVICE")
 
         AlertDialog.Builder(this)
             .setTitle("Pick Bluetooth device")
-            .setItems(deviceLabels.toTypedArray()) { _, idx ->
-                // Last item = disconnect option
+            .setItems(labels.toTypedArray()) { _, idx ->
                 if (idx == devices.size) {
-                    // Close the port if needed, then clear selection
-                    if (isPortOpen || isPortOpening) closePort()
+                    closePort()
                     selectedDevice = null
                     setBtDeviceStatus("DISCONNECTED")
-                    setPortStatus("CLOSED")
                     log("BT", "Device selection cleared")
                     refreshButtons()
                     return@setItems
@@ -311,8 +279,11 @@ class MainActivity : AppCompatActivity() {
             .show()
     }
 
+    /* ========= PORT control (toggle) ========= */
+    private fun togglePort() {
+        if (isPortOpen || isPortOpening) closePort() else openPort()
+    }
 
-    /* ========= PORT control ========= */
     private fun openPort() {
         val device = selectedDevice
         if (device == null) {
@@ -329,7 +300,6 @@ class MainActivity : AppCompatActivity() {
         setBtDeviceStatus("DEVICE $name")
         setPortStatus("OPENING…")
         log("PORT", "Opening RFCOMM to $name")
-
         refreshButtons()
 
         Thread {
@@ -338,7 +308,6 @@ class MainActivity : AppCompatActivity() {
             try {
                 val s = device.createRfcommSocketToServiceRecord(SPP_UUID)
                 s.connect()
-
                 socket = s
                 out = s.outputStream
 
@@ -382,39 +351,26 @@ class MainActivity : AppCompatActivity() {
         refreshConnectedDevices()
     }
 
-    private fun togglePort() {
-        if (isPortOpen || isPortOpening) {
-            closePort()
-        } else {
-            openPort()
-        }
-    }
     private fun closePortSilently() {
         try { out?.close() } catch (_: Exception) {}
         try { socket?.close() } catch (_: Exception) {}
     }
 
-    /* ========= UI state ========= */
+    /* ========= UI ========= */
     private fun refreshButtons() {
-        // SELECT BT disabled while the port is open/opening
         setPickButtonEnabled(!(isPortOpen || isPortOpening))
 
-        // Toggle button enabled only if a device is selected
         btnPortToggle.isEnabled = (selectedDevice != null)
-
-        // Button label reflects port state
         btnPortToggle.text = when {
             isPortOpening -> "OPENING…"
             isPortOpen -> "CLOSE PORT"
             else -> "OPEN PORT"
         }
-        val enabledColor = COLOR_ACTIVE
-        val disabledColor = COLOR_DISABLED
-        val isEnabledVisual = btnPortToggle.isEnabled && !isPortOpening
 
+        val isEnabledVisual = btnPortToggle.isEnabled && !isPortOpening
         btnPortToggle.alpha = if (isEnabledVisual) 1.0f else 0.6f
         btnPortToggle.backgroundTintList =
-            android.content.res.ColorStateList.valueOf(if (isEnabledVisual) enabledColor else disabledColor)
+            android.content.res.ColorStateList.valueOf(if (isEnabledVisual) COLOR_ACTIVE else COLOR_DISABLED)
     }
 
     private fun setPickButtonEnabled(enabled: Boolean) {
@@ -432,31 +388,18 @@ class MainActivity : AppCompatActivity() {
         portStatusText.text = "PORT: $msg"
     }
 
-    /* ========= Log ========= */
     private fun log(tag: String, msg: String) {
         val line = "[${LocalTime.now().format(tsFmt)}] $tag: $msg"
-
         if (logLines.size >= LOG_MAX) logLines.removeFirst()
         logLines.addLast(line)
 
         logText.text = "LOG:\n" + logLines.joinToString("\n")
-
-        // Auto-scroll to bottom
         logScroll.post { logScroll.fullScroll(ScrollView.FOCUS_DOWN) }
     }
 
     override fun onDestroy() {
         super.onDestroy()
-
-        // Stop GPS
-        locationCallback?.let { fusedClient.removeLocationUpdates(it) }
-        locationCallback = null
-
-        // Close port
+        speedProvider.stop()
         closePortSilently()
-        socket = null
-        out = null
-        isPortOpen = false
-        isPortOpening = false
     }
 }
