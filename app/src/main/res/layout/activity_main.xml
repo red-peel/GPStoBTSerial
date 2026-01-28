@@ -114,6 +114,19 @@
             android:textColor="#050B14"
             android:backgroundTint="#7FDBFF"
             android:layout_marginStart="10dp"/>
+
+        <androidx.appcompat.widget.SwitchCompat
+            android:id="@+id/switchAuto"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="12dp"
+            android:text="AUTO "
+            android:textAllCaps="true"
+            android:fontFamily="monospace"
+            android:textColor="#7FDBFF"
+            app:thumbTint="#7FDBFF"
+            app:trackTint="#1B3A4B" />
+
     </LinearLayout>
 
     <ScrollView

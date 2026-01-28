@@ -1,26 +1,31 @@
 package com.example.gpstovss
 
 import android.Manifest
+import android.app.Activity
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothManager
 import android.bluetooth.BluetoothSocket
+import android.companion.AssociationRequest
+import android.companion.BluetoothDeviceFilter
+import android.companion.CompanionDeviceManager
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.content.IntentSender
 import android.content.pm.PackageManager
-import android.os.Bundle
 import android.os.Build
+import android.os.Bundle
 import android.widget.Button
 import android.widget.ScrollView
 import android.widget.TextView
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
-import androidx.core.content.ContextCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import com.example.gpstovss.speed.GpsSpeedProvider
@@ -30,6 +35,8 @@ import java.io.OutputStream
 import java.time.LocalTime
 import java.time.format.DateTimeFormatter
 import java.util.UUID
+import java.util.regex.Pattern
+
 
 class MainActivity : AppCompatActivity() {
 
@@ -43,6 +50,8 @@ class MainActivity : AppCompatActivity() {
     private lateinit var logScroll: ScrollView
     private lateinit var btnPick: Button
     private lateinit var btnPortToggle: Button
+
+    private lateinit var switchAuto: androidx.appcompat.widget.SwitchCompat
 
     private val COLOR_ACTIVE = 0xFF7FDBFF.toInt()
     private val COLOR_DISABLED = 0xFF3A3A3A.toInt()
@@ -63,8 +72,45 @@ class MainActivity : AppCompatActivity() {
     @Volatile private var isPortOpening = false
     @Volatile private var isPortOpen = false
 
-    private val SPP_UUID =
+    private val SPP_UUID: UUID =
         UUID.fromString("00001101-0000-1000-8000-00805F9B34FB")
+
+    /* ========= Preferences ========= */
+    private val prefs by lazy { getSharedPreferences("gpstovss_prefs", MODE_PRIVATE) }
+    private val PREF_AUTO = "auto_enabled"
+    private val PREF_DEVICE_ADDR = "device_addr"
+    private val PREF_DEVICE_NAME = "device_name"
+
+    /* ========= CDM chooser result ========= */
+    private val cdmChooserLauncher =
+        registerForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { result ->
+            if (result.resultCode != Activity.RESULT_OK) return@registerForActivityResult
+            val data = result.data ?: return@registerForActivityResult
+
+            val device: BluetoothDevice? =
+                if (Build.VERSION.SDK_INT >= 33) {
+                    data.getParcelableExtra(
+                        CompanionDeviceManager.EXTRA_DEVICE,
+                        BluetoothDevice::class.java
+                    )
+                } else {
+                    @Suppress("DEPRECATION")
+                    data.getParcelableExtra(CompanionDeviceManager.EXTRA_DEVICE)
+                }
+
+            if (device != null) {
+                prefs.edit()
+                    .putString(PREF_DEVICE_ADDR, device.address)
+                    .putString(PREF_DEVICE_NAME, device.name ?: "")
+                    .apply()
+
+                selectedDevice = device
+                setBtDeviceStatus("ASSOCIATED: ${device.name ?: device.address}")
+                log("CDM", "Associated ${device.name ?: device.address}")
+                refreshButtons()
+            }
+        }
+
 
     /* ========= Permissions ========= */
     private val permissionLauncher =
@@ -125,7 +171,35 @@ class MainActivity : AppCompatActivity() {
         btnPick = findViewById(R.id.btnPick)
         btnPortToggle = findViewById(R.id.btnPortToggle)
 
-        btnPick.setOnClickListener { pickBluetoothDevice() }
+        switchAuto = findViewById(R.id.switchAuto)
+        switchAuto.isChecked = prefs.getBoolean(PREF_AUTO, false)
+
+        switchAuto.setOnCheckedChangeListener { _, enabled ->
+            if (enabled) {
+                val addr = prefs.getString(PREF_DEVICE_ADDR, null)
+                val name = prefs.getString(PREF_DEVICE_NAME, "") ?: ""
+
+                if (addr.isNullOrBlank()) {
+                    log("AUTO", "Enable requested but no associated device")
+                    setBtDeviceStatus("ASSOCIATE FIRST")
+                    switchAuto.isChecked = false
+                    return@setOnCheckedChangeListener
+                }
+
+                prefs.edit().putBoolean(PREF_AUTO, true).apply()
+                startAutoService(addr, name)
+                log("AUTO", "Enabled for ${if (name.isNotBlank()) name else addr}")
+            } else {
+                prefs.edit().putBoolean(PREF_AUTO, false).apply()
+                stopAutoService()
+                log("AUTO", "Disabled")
+            }
+
+            refreshButtons()
+        }
+
+
+        btnPick.setOnClickListener {  associateEsp32WithCDM() }
         btnPortToggle.setOnClickListener { togglePort() }
 
         setBtDeviceStatus("DISCONNECTED")
@@ -279,6 +353,18 @@ class MainActivity : AppCompatActivity() {
                 }
 
                 selectedDevice = devices[idx]
+
+                prefs.edit()
+                    .putString(PREF_DEVICE_ADDR, selectedDevice?.address ?: "")
+                    .putString(PREF_DEVICE_NAME, selectedDevice?.name ?: "")
+                    .apply()
+
+                // If AUTO is already enabled, immediately retarget the service
+                if (prefs.getBoolean(PREF_AUTO, false) && selectedDevice != null) {
+                    startAutoService(selectedDevice!!.address, selectedDevice!!.name ?: "")
+                }
+
+
                 val name = selectedDevice?.name ?: selectedDevice?.address ?: "UNKNOWN"
                 setBtDeviceStatus("SELECTED $name")
                 log("BT", "Selected $name")
@@ -323,10 +409,6 @@ class MainActivity : AppCompatActivity() {
                 isPortOpening = false
 
                 runOnUiThread {
-                    ContextCompat.startForegroundService(
-                        this,
-                        Intent(this, com.example.gpstovss.service.VssForegroundService::class.java)
-                    )
                     setPortStatus("OPEN")
                     log("PORT", "OPEN")
                     refreshButtons()
@@ -372,12 +454,63 @@ class MainActivity : AppCompatActivity() {
         try { socket?.close() } catch (_: Exception) {}
     }
 
+    private fun startAutoService(addr: String, name: String) {
+        val i = Intent(this, com.example.gpstovss.service.VssForegroundService::class.java).apply {
+            action = com.example.gpstovss.service.VssForegroundService.ACTION_START_AUTO
+            putExtra(com.example.gpstovss.service.VssForegroundService.EXTRA_DEVICE_ADDR, addr)
+            putExtra(com.example.gpstovss.service.VssForegroundService.EXTRA_DEVICE_NAME, name)
+        }
+        androidx.core.content.ContextCompat.startForegroundService(this, i)
+    }
+
+    private fun stopAutoService() {
+        val i = Intent(this, com.example.gpstovss.service.VssForegroundService::class.java).apply {
+            action = com.example.gpstovss.service.VssForegroundService.ACTION_STOP
+        }
+        startService(i)
+    }
+
+    private fun associateEsp32WithCDM() {
+        val cdm = getSystemService(Context.COMPANION_DEVICE_SERVICE) as CompanionDeviceManager
+
+        val namePattern = Pattern.compile(".*(GPStoVSS|ESP32).*", Pattern.CASE_INSENSITIVE)
+
+        val filter = BluetoothDeviceFilter.Builder()
+            .setNamePattern(namePattern)
+            .build()
+
+        val request = AssociationRequest.Builder()
+            .addDeviceFilter(filter)
+            .setSingleDevice(true)
+            .build()
+
+        cdm.associate(
+            request,
+            object : CompanionDeviceManager.Callback() {
+                override fun onDeviceFound(chooserLauncher: IntentSender) {
+                    val req = IntentSenderRequest.Builder(chooserLauncher).build()
+                    cdmChooserLauncher.launch(req)
+                }
+
+                override fun onFailure(error: CharSequence?) {
+                    log("CDM", "Association failed: $error")
+                    setBtDeviceStatus("ASSOC FAILED")
+                }
+            },
+            null
+        )
+    }
+
+
+
     /* ========= UI ========= */
     private fun refreshButtons() {
         setPickButtonEnabled(!(isPortOpen || isPortOpening))
+        val autoOn = switchAuto.isChecked
 
-        btnPortToggle.isEnabled = (selectedDevice != null)
-        btnPortToggle.text = when {
+
+        btnPortToggle.isEnabled = !autoOn && (selectedDevice != null)
+        btnPortToggle.text = if (autoOn) "AUTO MODE" else when {
             isPortOpening -> "OPENING…"
             isPortOpen -> "CLOSE PORT"
             else -> "OPEN PORT"
