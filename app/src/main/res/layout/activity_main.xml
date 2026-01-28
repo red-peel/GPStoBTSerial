@@ -4,47 +4,147 @@
     xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
-    android:layout_height="match_parent">
+    android:layout_height="match_parent"
+    android:background="#050B14">
 
+    <!-- BT device selection/connection state -->
     <TextView
-        android:id="@+id/statusText"
-        android:layout_width="wrap_content"
+        android:id="@+id/btDeviceStatusText"
+        android:layout_width="0dp"
         android:layout_height="wrap_content"
-        android:text="Status: idle"
-        android:textSize="18sp"
-        android:layout_margin="24dp"
+        android:text="BT_DEVICE: INIT"
+        android:textSize="14sp"
+        android:fontFamily="monospace"
+        android:textColor="#7FDBFF"
+        android:layout_marginStart="16dp"
+        android:layout_marginEnd="16dp"
+        android:layout_marginTop="16dp"
         app:layout_constraintTop_toTopOf="parent"
-        app:layout_constraintStart_toStartOf="parent"/>
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"/>
 
+    <!-- RFCOMM socket (“port”) state + permission/GPS errors -->
+    <TextView
+        android:id="@+id/portStatusText"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:text="PORT: CLOSED"
+        android:textSize="14sp"
+        android:fontFamily="monospace"
+        android:textColor="#7FDBFF"
+        android:layout_marginStart="16dp"
+        android:layout_marginEnd="16dp"
+        android:layout_marginTop="6dp"
+        app:layout_constraintTop_toBottomOf="@id/btDeviceStatusText"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"/>
+
+    <!-- Best-effort list of currently connected BT devices -->
+    <TextView
+        android:id="@+id/connectedDevicesText"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:text="OTHER_CONNECTED_DEVICES: (unknown)"
+        android:textSize="12sp"
+        android:fontFamily="monospace"
+        android:textColor="#7FDBFF"
+        android:layout_marginStart="16dp"
+        android:layout_marginEnd="16dp"
+        android:layout_marginTop="6dp"
+        app:layout_constraintTop_toBottomOf="@id/portStatusText"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"/>
+
+    <!-- Speed display -->
     <TextView
         android:id="@+id/speedText"
-        android:layout_width="wrap_content"
+        android:layout_width="0dp"
         android:layout_height="wrap_content"
-        android:text="Speed: -- mph"
-        android:textSize="32sp"
-        android:layout_marginStart="24dp"
-        android:layout_marginTop="16dp"
-        app:layout_constraintTop_toBottomOf="@id/statusText"
-        app:layout_constraintStart_toStartOf="parent"/>
-
-    <Button
-        android:id="@+id/btnPick"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="Pick Bluetooth Device"
-        android:layout_marginTop="24dp"
-        android:layout_marginStart="24dp"
-        app:layout_constraintTop_toBottomOf="@id/speedText"
-        app:layout_constraintStart_toStartOf="parent"/>
-
-    <Button
-        android:id="@+id/btnConnect"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="Connect"
-        android:enabled="false"
+        android:text="SPEED_MPH: --.--"
+        android:textSize="26sp"
+        android:fontFamily="monospace"
+        android:textColor="#7FDBFF"
         android:layout_marginStart="16dp"
-        app:layout_constraintTop_toTopOf="@id/btnPick"
-        app:layout_constraintStart_toEndOf="@id/btnPick"/>
+        android:layout_marginEnd="16dp"
+        android:layout_marginTop="10dp"
+        app:layout_constraintTop_toBottomOf="@id/connectedDevicesText"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"/>
+    <!-- Raw Display-->
+    <TextView
+        android:id="@+id/rawSpeedText"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:text="RAW_MPH: --.--"
+        android:textSize="14sp"
+        android:fontFamily="monospace"
+        android:textColor="#7FDBFF"
+        android:layout_marginStart="16dp"
+        android:layout_marginEnd="16dp"
+        android:layout_marginTop="4dp"
+        app:layout_constraintTop_toBottomOf="@id/speedText"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"/>
+
+
+    <!-- Controls row -->
+    <LinearLayout
+        android:id="@+id/buttonRow"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:layout_marginStart="16dp"
+        android:layout_marginEnd="16dp"
+        android:layout_marginTop="4dp"
+        app:layout_constraintTop_toBottomOf="@id/rawSpeedText"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent">
+
+        <Button
+            android:id="@+id/btnPick"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="SELECT BT"
+            android:textAllCaps="true"
+            android:fontFamily="monospace"
+            android:textColor="#050B14"
+            android:backgroundTint="#7FDBFF"/>
+
+        <Button
+            android:id="@+id/btnPortToggle"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="OPEN PORT"
+            android:textAllCaps="true"
+            android:fontFamily="monospace"
+            android:textColor="#050B14"
+            android:backgroundTint="#7FDBFF"
+            android:layout_marginStart="10dp"/>
+
+    </LinearLayout>
+
+    <!-- Log window -->
+    <ScrollView
+        android:id="@+id/logScroll"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:layout_marginStart="16dp"
+        android:layout_marginEnd="16dp"
+        android:layout_marginTop="12dp"
+        android:layout_marginBottom="16dp"
+        app:layout_constraintTop_toBottomOf="@id/buttonRow"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent">
+
+        <TextView
+            android:id="@+id/logText"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="LOG:\n"
+            android:textSize="12sp"
+            android:fontFamily="monospace"
+            android:textColor="#7FDBFF" />
+    </ScrollView>
 
 </androidx.constraintlayout.widget.ConstraintLayout>
