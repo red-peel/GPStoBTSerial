@@ -51,6 +51,7 @@ class MainActivity : AppCompatActivity() {
     private val tsFmt: DateTimeFormatter = DateTimeFormatter.ofPattern("HH:mm:ss.SSS")
     private val logLines = ArrayDeque<String>(300)
     private val LOG_MAX = 300
+    private var lastTxLogMs = 0L
 
     /* ========= Speed provider (modular) ========= */
     private lateinit var speedProvider: SpeedProvider
@@ -204,13 +205,18 @@ class MainActivity : AppCompatActivity() {
                 val s = speedProvider.latest()
 
                 speedText.text = "SPEED_MPH: %.2f".format(s.speedMph)
-                rawSpeedText.text = "RAW_MPH: %.2f".format(s.rawMph)
+                rawSpeedText.text = "RAW_MPH: %.2f   %s".format(s.rawMph, s.source)
 
                 if (isPortOpen) {
                     val line = "SPEED_MPH:%.2f\r\n".format(s.speedMph)
                     try {
                         out?.write(line.toByteArray())
-                        log("TX", line.trim())
+                        // Log TX at most once per second (keeps TX fast, log quiet)
+                        val now = android.os.SystemClock.elapsedRealtime()
+                        if (now - lastTxLogMs >= 1000L) {
+                            log("TX", line.trim())
+                            lastTxLogMs = now
+                        }
                     } catch (e: Exception) {
                         setPortStatus("WRITE FAIL")
                         log("PORT", "Write failed (${e.message})")
