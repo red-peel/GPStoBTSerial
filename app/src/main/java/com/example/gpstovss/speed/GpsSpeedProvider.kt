@@ -42,7 +42,7 @@ class GpsSpeedProvider(
                 }
                 lastFixMs = nowMs
                 // Optional debug hook
-                ///onDebug("gps_mps=%.2f hasBearing=%s".format(lastMps, loc.hasBearing()))
+                // onDebug("gps_mps=%.2f ".format(lastMps))
             }
         }
 

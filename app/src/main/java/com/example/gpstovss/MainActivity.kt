@@ -30,6 +30,8 @@ import java.io.OutputStream
 import java.time.LocalTime
 import java.time.format.DateTimeFormatter
 import java.util.UUID
+import android.net.Uri
+import android.provider.Settings
 
 class MainActivity : AppCompatActivity() {
 
@@ -67,6 +69,14 @@ class MainActivity : AppCompatActivity() {
     private val SPP_UUID =
         UUID.fromString("00001101-0000-1000-8000-00805F9B34FB")
 
+    /* ========= Foreground Service ========= */
+    private fun ensureVssServiceRunning() {
+        ContextCompat.startForegroundService(
+            this,
+            Intent(this, com.example.gpstovss.service.VssForegroundService::class.java)
+        )
+    }
+
     /* ========= Permissions ========= */
     private val permissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { perms ->
@@ -75,7 +85,20 @@ class MainActivity : AppCompatActivity() {
                 log("PORT", "Permissions granted")
 
                 // Start speed provider AFTER permissions
+                ensureVssServiceRunning()
                 speedProvider.start()
+
+                if (!hasBackgroundLocation() && Build.VERSION.SDK_INT >= 29) {
+                    AlertDialog.Builder(this)
+                        .setTitle("Background location needed")
+                        .setMessage(
+                            "To run the dashboard on top and keep streaming speed reliably, " +
+                                    "set Location permission to “Allow all the time” on the next screen."
+                        )
+                        .setPositiveButton("Open Settings") { _, _ -> openAppLocationSettings() }
+                        .setNegativeButton("Later", null)
+                        .show()
+                }
 
                 refreshConnectedDevices()
                 refreshButtons()
@@ -195,6 +218,21 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun hasBackgroundLocation(): Boolean {
+        return if (Build.VERSION.SDK_INT < 29) true
+        else ActivityCompat.checkSelfPermission(
+            this,
+            Manifest.permission.ACCESS_BACKGROUND_LOCATION
+        ) == PackageManager.PERMISSION_GRANTED
+    }
+
+    private fun openAppLocationSettings() {
+        val intent = Intent(
+            Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+            Uri.fromParts("package", packageName, null)
+        )
+        startActivity(intent)
+    }
 
     /* ========= UI tick (display + TX) ========= */
     private fun startUiTick() {
